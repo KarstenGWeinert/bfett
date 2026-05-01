@@ -1,2 +1,6 @@
 data/
 
+# Google service account keys
+service-account-key.json
+*service-account*.json
+

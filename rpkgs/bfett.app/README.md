@@ -1,4 +1,4 @@
-# bfett.shiny
+# bfett.app
 bfett Portfolio Dashboard
 
 ## Roadmap

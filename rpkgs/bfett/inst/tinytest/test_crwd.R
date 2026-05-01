@@ -1,6 +1,6 @@
 library(tinytest)
 
-# load_all("bfett.processes"); test_bfett("crwd")
+# load_all("bfett"); test_bfett("crwd")
 
 # Error in FUN(X[[i]], ...) : more sold than bought, isin=US22788C1053
 # Calls: <Anonymous> ... lapply -> FUN -> transform -> do.call -> lapply -> FUN
@@ -16,7 +16,7 @@ US22788C1053	Crowdstrike Holdings (A)	2024-07-19	1.769285	501.27	buy	nert	tr
 ")
 
 tmp_dir <- tempdir()
-process_transactions(dat, seeds = tmp_dir, verbose=TRUE)
+process_transactions(dat, output_dir = tmp_dir, verbose=TRUE)
 ap <- read.csv(file.path(tmp_dir, "active_positions.csv"))
 expect_true(nrow(ap)==0)
 

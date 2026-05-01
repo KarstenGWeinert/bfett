@@ -18,7 +18,7 @@ US5949181045	Microsoft	2024-06-13	0.0256	0.01	other	nert	tr
 ")
 
 tmp_dir <- tempdir()
-expect_error(process_transactions(dat, seeds = tmp_dir, verbose=TRUE))
+expect_error(process_transactions(dat, output_dir = tmp_dir, verbose=TRUE))
 
 unlink(tmp_dir)
 

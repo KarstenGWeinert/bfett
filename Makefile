@@ -14,7 +14,8 @@ help:
 
 # Prüft auf neue Daten und lädt sie
 ingest:
-	echo "NIY"
+	Rscript ingest/lsx_trades.R
+	Rscript ingest/transactions.R
 	@echo "✅ Ingestion abgeschlossen (neue Tick-Trades + Google Sheets Sync)"
 
 # Aktualisiert die DuckDB – führt alle Lea-Transformationen aus

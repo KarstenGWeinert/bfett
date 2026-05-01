@@ -1,7 +1,7 @@
 #' Process transactions
 #'
 #' Takes "raw" transaction data (isin, name, date, size, amount, type, portfolio, broker) and
-#' generates three csv -- cash, active_positions, closed_trades -- in the provided seeds folder.
+#' generates three csv -- cash, active_positions, closed_trades -- in the provided output_dir folder.
 #'
 #' Is able to handle different portfolios. 
 #'
@@ -13,16 +13,16 @@
 #' account statements. It seems account statements are the "real" thing.
 #'
 #' @param transactions data.frame or filename
-#' @param seeds character, path to seeds folder of the dbt project, default dirname(transactions)
+#' @param output_dir character, path to output folder, default dirname(transactions)
 #' @param verbose logical, print diagnostic messages
 #' @param tol_amount numerical, tolerance for position sizes
 #' @return NULL, used for its side effects
 #' @export
-process_transactions <- function(transactions, seeds=NULL, verbose=FALSE, tol_amount=0.00001) {
+process_transactions <- function(transactions, output_dir=NULL, verbose=FALSE, tol_amount=0.00001) {
 	# validate input
 	if(is.character(transactions)) {
 		stopifnot(length(transactions)==1, file.exists(transactions))
-		if(is.null(seeds)) seeds <- dirname(transactions)
+		if(is.null(output_dir)) output_dir <- dirname(transactions)
 		transactions <- utils::read.csv(transactions, na.strings="")
 	}
 	stopifnot(is.data.frame(transactions), nrow(transactions)>0)
@@ -30,7 +30,7 @@ process_transactions <- function(transactions, seeds=NULL, verbose=FALSE, tol_am
 	miss_cn <- setdiff(req_cn, colnames(transactions))
 	if(length(miss_cn)) stop("Missing column(s) in transactions: ", paste0(miss_cn, collapse=", "))
 	stopifnot(all(unique(transactions[["type"]]) %in% c("deposit", "buy", "other", "sell", "withdraw")))
-	stopifnot(dir.exists(seeds))
+	stopifnot(dir.exists(output_dir))
 	
 	# remove unneeded information, enforce data.table
 	transactions <- transactions[,req_cn]
@@ -125,9 +125,9 @@ process_transactions <- function(transactions, seeds=NULL, verbose=FALSE, tol_am
 	rownames(closed_trades) <- NULL
 
 	# write result
-	utils::write.csv(x=cash, file=file.path(seeds, "cash.csv"), na="", row.names=FALSE)
-	utils::write.csv(x=active_positions, file=file.path(seeds, "active_positions.csv"), na="", row.names=FALSE)
-	utils::write.csv(x=closed_trades, file=file.path(seeds, "closed_trades.csv"), na="", row.names=FALSE)
+	utils::write.csv(x=cash, file=file.path(output_dir, "cash.csv"), na="", row.names=FALSE)
+	utils::write.csv(x=active_positions, file=file.path(output_dir, "active_positions.csv"), na="", row.names=FALSE)
+	utils::write.csv(x=closed_trades, file=file.path(output_dir, "closed_trades.csv"), na="", row.names=FALSE)
 	
 }
 

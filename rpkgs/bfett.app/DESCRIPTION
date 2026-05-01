@@ -1,17 +1,17 @@
-Package: bfett.processes
+Package: bfett.app
 Type: Package
 Title: Finance Functions
-Version: 0.0.8
-Date: 2025-07-13
+Version: 0.1.5
+Date: 2025-05-11
 Author: Karsten Weinert
 Maintainer: Karsten Weinert <karsten.g.weinert@gmail.com>
 Description: Useful functions for managing a portfolio. 
 	Supports multiple portfolios and brokers. Involves some
-	manual steps, though. Hobby project.
+	manual steps, though.
 License: file LICENSE
 Depends: R (>= 4.1.0)
 Imports:
-    data.table, pdftools
+    shiny, bslib, data.table, duckdb, reactable, plotly, stats, utils, DBI
 Suggests:
 	tinytest
 LazyLoad: yes

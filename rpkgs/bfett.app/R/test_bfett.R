@@ -11,11 +11,11 @@ test_bfett <- function(fn=NULL, which=c("summary", "fails", "all"), verbose=FALS
 	stopifnot(requireNamespace("tinytest"))
 	if(length(which)>1) which <- which[1]
 	if(!is.null(fn)) for (f in fn) {
-		full_fn <- system.file(paste0("/tinytest/test_", fn, ".R"), package="bfett.processes")
+		full_fn <- system.file(paste0("/tinytest/test_", fn, ".R"), package="bfett.app")
 		stopifnot(file.exists(full_fn))
 		out <- tinytest::run_test_file(full_fn, verbose=verbose)
 	} else {
-		out <- tinytest::run_test_dir(system.file("tinytest", package="bfett.processes"), verbose=verbose)
+		out <- tinytest::run_test_dir(system.file("tinytest", package="bfett.app"), verbose=verbose)
 	}
 	if(which=="summary")
 		return(summary(out))

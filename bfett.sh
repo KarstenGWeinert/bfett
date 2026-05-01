@@ -3,7 +3,7 @@
 IMAGE="bfett"
 CONTAINER_NAME="bfett"
 PORT="3838"
-HOST_DIR="$(cd "$(dirname "$0")" && pwd)"
+HOST_DIR="$(dirname "$(realpath "$0")")"
 FAUCET_DIR="/home/faucet"
 
 VOLUMES="-v $HOST_DIR/config:$FAUCET_DIR/config"
@@ -19,7 +19,7 @@ check_docker() {
 
 cmd_build() {
     check_docker
-    echo "Building image: $IMAGE"
+    echo "Building image: $IMAGE in $HOST_DIR"
     docker build --progress=plain -t "$IMAGE" "$HOST_DIR"
 }
 

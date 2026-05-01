@@ -6,7 +6,8 @@ PORT="3838"
 HOST_DIR="$(cd "$(dirname "$0")" && pwd)"
 FAUCET_DIR="/home/faucet"
 
-VOLUMES="-v $HOST_DIR/data:$FAUCET_DIR/data"
+VOLUMES="-v $HOST_DIR/config:$FAUCET_DIR/config"
+VOLUMES="$VOLUMES -v $HOST_DIR/data:$FAUCET_DIR/data"
 VOLUMES="$VOLUMES -v $HOST_DIR/logs:$FAUCET_DIR/logs"
 
 check_docker() {
@@ -25,6 +26,7 @@ cmd_build() {
 cmd_run() {
     check_docker
 
+    mkdir -p "$HOST_DIR/config"
     mkdir -p "$HOST_DIR/data"
     mkdir -p "$HOST_DIR/logs"
 

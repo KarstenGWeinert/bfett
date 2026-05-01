@@ -1,4 +1,4 @@
-# bfett.processes
+# bfett
 
 R Package mit Portfolio Data Functions.
 

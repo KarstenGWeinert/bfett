@@ -1,0 +1,18 @@
+Package: bfett
+Type: Package
+Title: Finance Functions
+Version: 0.0.8
+Date: 2025-07-13
+Author: Karsten Weinert
+Maintainer: Karsten Weinert <karsten.g.weinert@gmail.com>
+Description: Useful functions for managing a portfolio. 
+	Supports multiple portfolios and brokers. Involves some
+	manual steps, though. Hobby project.
+License: file LICENSE
+Depends: R (>= 4.1.0)
+Imports:
+    data.table, httr, jsonlite, jose, openssl, pdftools
+Suggests:
+	tinytest
+LazyLoad: yes
+Config/roxygen2/version: 8.0.0

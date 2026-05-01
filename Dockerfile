@@ -19,7 +19,10 @@ RUN mkdir -p /usr/local/lib/R/etc && \
 
 RUN R -e "install.packages('pak', repos='https://cloud.r-project.org/')"
 
-RUN R -e "pak::pkg_install(c('data.table', 'rmarkdown', 'tinytest', 'plotly', 'htmltools', 'htmlwidgets', 'flexdashboard', 'DBI', 'duckdb', 'reactable', 'echarts4r', 'shiny', 'bslib'))"
+RUN R -e "pak::pkg_install(c('data.table', 'httr', 'jsonlite', 'jose', 'openssl', 'rmarkdown', 'tinytest', 'plotly', 'htmltools', 'htmlwidgets', 'flexdashboard', 'DBI', 'duckdb', 'reactable', 'echarts4r', 'shiny', 'bslib'))"
+
+COPY rpkgs/bfett/ /tmp/bfett/
+RUN R -e "pak::local_install('/tmp/bfett', dependencies = FALSE)"
 
 RUN python3 -m venv /opt/lea-venv
 RUN /opt/lea-venv/bin/pip install --upgrade pip

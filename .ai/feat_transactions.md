@@ -3,49 +3,9 @@
 ## Overview
 
 Create `bfett/ingest/transactions.R` to:
-1. Authenticate with Google using `gcloud` CLI
-2. Read transaction data from a Google Sheet via Google Sheets API v4
-3. Transform data using existing `process_transactions()` function
-4. Output CSVs to `bfett/data/raw/transactions/` and `bfett/seeds/`
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Docker Container                         │
-│                                                             │
-│  ┌─────────────┐    ┌──────────────┐    ┌─────────────┐  │
-│  │ gcloud CLI  │───▶│ R Script     │───▶│ CSVs        │  │
-│  │ (token)     │    │ transactions │    │ (output)    │  │
-│  └─────────────┘    └──────────────┘    └─────────────┘  │
-│         │                  │                               │
-│         ▼                  ▼                               │
-│  ┌─────────────┐    ┌──────────────┐                      │
-│  │ Service     │    │ httr +       │                      │
-│  │ Account Key │    │ data.table   │                      │
-│  └─────────────┘    └──────────────┘                      │
-└─────────────────────────────────────────────────────────────┘
-                    ▲
-                    │ Mounted volumes / secrets
-                    ▼
-         ┌──────────────────┐
-         │ Host filesystem  │
-         │ - service key   │
-         │ - .env config   │
-         │ - data output   │
-         └──────────────────┘
-```
-
-## Files to Create/Modify
-
-| File | Action | Description |
-|------|--------|-------------|
-| `bfett/ingest/transactions.R` | Create | New script for Google Sheets ingestion |
-| `bfett/Dockerfile` | Modify | Add gcloud SDK + Google auth |
-| `bfett/.env` | Modify | Add new environment variables |
-| `bfett/bfett.sh` | Modify | Add new command for transactions |
-| `bfett/scripts/update_transactions.sh` | Create | Wrapper script for Docker |
-| `bfett/.gitignore` | Modify | Exclude service account key |
+1. Read transaction data from a Google Sheet using a Service Account JSON key file. Create a `read_google_sheet` function for that purpose.
+2. Transform data and store the resulting CSVs (`cash.csv`, `active_positions.csv`, `closed_trades.csv`) in `data/raw/transactions/` using existing `process_transactions()` function.
+3. Full refresh each run (no incremental loading) — Google Sheet is small and idempotent.
 
 ## Implementation Steps
 
@@ -55,230 +15,175 @@ Add these environment variables:
 
 ```bash
 # Google Sheets
-TRANSACTIONS_SHEET_URL=https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit
-GOOGLE_SERVICE_ACCOUNT_KEY=/secure/path/service-account-key.json
+TRANSACTIONS_SHEET_URL=https://docs.google.com/spreadsheets/d/12rCteU7-3Lbq9kX6fGrUlFlqvyM1iQT9XXrRV1fmaJs/edit
+GOOGLE_SERVICE_ACCOUNT_KEY=/home/faucet/config/service-account-key.json
+TRANSACTIONS_RAW_DIR=data/raw/transactions
 ```
 
-### Step 2: Create `bfett/ingest/transactions.R`
+### Step 2: Create `bfett/rpkgs/bfett/R/read_gsheet.R`
 
 ```r
-#!/usr/bin/env Rscript
-
-suppressPackageStartupMessages({
-  library(httr)
-  library(jsonlite)
-  library(data.table)
-})
-
-options(warn = 1)
-
-get_access_token <- function() {
-  result <- system2(
-    "gcloud", 
-    args = c("auth", "print-access-token"),
-    stdout = TRUE,
-    stderr = TRUE
+#' Read Google Sheet using Service Account
+#'
+#' Reads data from a private Google Sheet using a Service Account JSON key file.
+#' Returns a standard base R data.frame with minimal dependencies.
+#'
+#' @param spreadsheet_id Character. Google Spreadsheet ID (the long string in the URL).
+#' @param sheet_name Character. Name of the sheet (tab) to read. 
+#'   If NULL, reads the first sheet.
+#' @param range Character. Cell range to read (e.g. "A1:Z1000"). 
+#'   If NULL, reads all data in the sheet.
+#' @param json_key_path Character. Path to the Service Account JSON key file.
+#'
+#' @return A base R data.frame containing the sheet data.
+#'
+#' @importFrom httr POST GET add_headers http_error status_code content
+#' @importFrom jsonlite fromJSON
+#' @importFrom jose jwt_encode_sig
+#' @importFrom openssl read_key
+#'
+#' @examples
+#' \dontrun{
+#'   df <- read_gsheet(
+#'     spreadsheet_id = "1aBcD1234EfGh5678IjKlMnOpQrStUvWxYz",
+#'     sheet_name     = "Daten",
+#'     range          = "A1:Z500",
+#'     json_key_path  = "service-account-key.json"
+#'   )
+#' }
+#'
+read_gsheet <- function(spreadsheet_id,
+                              sheet_name = NULL,
+                              range = NULL,
+                              json_key_path = "service-account-key.json") {
+  
+  # Load service account credentials
+  key <- fromJSON(json_key_path)
+  
+  # Create JWT for Service Account authentication
+  claim <- list(
+    iss   = key$client_email,
+    scope = "https://www.googleapis.com/auth/spreadsheets.readonly",
+    aud   = "https://oauth2.googleapis.com/token",
+    exp   = as.integer(Sys.time()) + 3600,
+    iat   = as.integer(Sys.time())
   )
-  if (attr(result, "status") != 0) {
-    stop("Failed to get access token: ", paste(result, collapse = "\n"))
-  }
-  return(result[1])
-}
-
-extract_sheet_id <- function(url) {
-  match <- regmatches(url, regexpr("d/[a-zA-Z0-9_-]+", url))
-  sub("d/", "", match)
-}
-
-read_google_sheet <- function(sheet_id, access_token, range = "A1:ZZ100000") {
-  url <- sprintf(
-    "https://sheets.googleapis.com/v4/spreadsheets/%s/values/%s",
-    sheet_id,
-    URLencode(range, reserved = FALSE)
+  
+  # Encode and sign JWT (RS256)
+  jwt <- jwt_encode_sig(
+    claim = claim,
+    key   = read_key(key$private_key)
   )
   
-  response <- GET(
-    url,
-    add_headers(Authorization = paste("Bearer", access_token))
+  # Request access token
+  token_resp <- POST(
+    url = "https://oauth2.googleapis.com/token",
+    body = list(
+      grant_type = "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion  = jwt
+    ),
+    encode = "form"
   )
   
-  if (status_code(response) != 200) {
-    stop("API request failed: ", content(response, "text"))
+  token <- content(token_resp, "parsed")$access_token
+  
+  if (is.null(token)) {
+    stop("Failed to retrieve access token from Google")
   }
   
-  data <- content(response, "text") |> fromJSON()
-  
-  if (is.null(data$values) || length(data$values) == 0) {
-    stop("No data found in sheet")
+  # Build Google Sheets API URL using paste0
+  rng <- if (!is.null(sheet_name)) {
+    if (!is.null(range)) paste0(sheet_name, "!", range) else sheet_name
+  } else {
+    range %||% "A:Z"
   }
   
-  values <- data$values
-  
-  if (nrow(values) == 0) {
-    stop("Sheet is empty")
-  }
-  
-  colnames(values) <- values[1, ]
-  values <- values[-1, ]
-  
-  as.data.table(values)
-}
-
-ensure_directory <- function(dir_path) {
-  if (!dir.exists(dir_path)) {
-    dir.create(dir_path, recursive = TRUE)
-    message("Created directory: ", dir_path)
-  }
-}
-
-main <- function() {
-  message("Reading configuration")
-  if (!file.exists(".env")) stop("Error: .env file not found.")
-  readRenviron(".env")
-  
-  sheet_url <- Sys.getenv("TRANSACTIONS_SHEET_URL")
-  key_path <- Sys.getenv("GOOGLE_SERVICE_ACCOUNT_KEY")
-  
-  if (sheet_url == "") stop("Error: TRANSACTIONS_SHEET_URL not set")
-  if (key_path == "") stop("Error: GOOGLE_SERVICE_ACCOUNT_KEY not set")
-  if (!file.exists(key_path)) stop("Error: Service account key not found: ", key_path)
-  
-  message("Authenticating with service account...")
-  auth_result <- system2(
-    "gcloud", 
-    args = c("auth", "activate-service-account", "--key-file", key_path),
-    stderr = TRUE
+  url <- paste0(
+    "https://sheets.googleapis.com/v4/spreadsheets/", spreadsheet_id, "/values/",
+    rng,
+    "?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE"
   )
-  if (attr(auth_result, "status") != 0) {
-    stop("Failed to activate service account: ", paste(auth_result, collapse = "\n"))
+  
+  # Fetch data from Google Sheets API
+  resp <- GET(url, add_headers(Authorization = paste("Bearer", token)))
+  
+  if (http_error(resp)) {
+    stop(paste("HTTP error", status_code(resp), "-", content(resp, "text")))
   }
   
-  message("Getting access token...")
-  access_token <- get_access_token()
+  data_raw <- content(resp, "parsed")
   
-  sheet_id <- extract_sheet_id(sheet_url)
-  message("Reading from sheet: ", sheet_id)
+  if (length(data_raw$values) == 0) {
+    return(data.frame())
+  }
   
-  dt <- read_google_sheet(sheet_id, access_token)
-  message("Read ", nrow(dt), " rows from Google Sheet")
+  df <- as.data.frame(do.call(rbind, data_raw$values), stringsAsFactors = FALSE)
+  colnames(df) <- as.character(df[1, ])
+  df <- df[-1, , drop = FALSE]
   
-  dt[, date := as.Date(date)]
-  dt[, size := as.numeric(size)]
-  dt[, amount := as.numeric(amount)]
+  # Clean column names
+  colnames(df) <- make.names(colnames(df), unique = TRUE)
   
-  raw_dir <- "bfett/data/raw/transactions"
-  ensure_directory(raw_dir)
-  
-  temp_csv <- file.path(raw_dir, "transactions_raw.csv")
-  fwrite(dt, temp_csv, na = "")
-  message("Saved raw transactions to: ", temp_csv)
-  
-  source(file.path("bfett", "dashboard", "rpkgs", "bfett.processes", "R", "process_transactions.R"))
-  
-  seeds_dir <- "bfett/seeds"
-  ensure_directory(seeds_dir)
-  
-  process_transactions(transactions = temp_csv, seeds = seeds_dir, verbose = TRUE)
-  
-  message("Transactions ingestion complete.")
+  rownames(df) <- NULL
+  return(df)
 }
-
-main()
 ```
 
-### Step 3: Modify Dockerfile
+### Step 3: Add new dependencies to `bfett/rpkgs/bfett/DESCRIPTION`
 
-Add Google Cloud SDK installation after the existing apt-get section (around line 14):
+The new dependencies are `httr`, `jsonlite`, `jose`, and `openssl`. Add them to the Imports section.
+
+### Step 4: Rename `seeds` parameter to `output_dir` in `process_transactions()`
+
+In `rpkgs/bfett/R/process_transactions.R`:
+- Rename parameter `seeds` → `output_dir`
+- Update internal references
+- Regenerate `man/process_transactions.Rd`
+
+In test files:
+- `rpkgs/bfett/inst/tinytest/test_crwd.R` — update `seeds = tmp_dir` → `output_dir = tmp_dir`
+- `rpkgs/bfett/inst/tinytest/test_msft.R` — update `seeds = tmp_dir` → `output_dir = tmp_dir`
+- `rpkgs/bfett/inst/tinytest/test_xiaomi.R` — update `seeds = tmp_dir` → `output_dir = tmp_dir`
+
+### Step 5: Modify Dockerfile
+
+Add these lines before the existing `COPY` commands:
 
 ```dockerfile
-# Install Google Cloud SDK for gcloud CLI
-RUN apt-get update && apt-get install -y \
-    gnupg \
-    software-properties-common \
-    && rm -rf /var/lib/apt/lists/*
-
-# Add Google Cloud SDK repository
-RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | \
-    tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \
-    curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | \
-    apt-key --keyring /usr/share/keyrings/cloud.google.gpg add - && \
-    apt-get update && apt-get install -y google-cloud-cli && \
-    rm -rf /var/lib/apt/lists/*
+COPY rpkgs/bfett/ /tmp/bfett/
 ```
 
-Add script copy after line 86:
+After the existing `RUN R -e "pak::pkg_install(...)"` line, add:
 
 ```dockerfile
-COPY ./scripts/update_transactions.sh /app/scripts
+RUN R -e "pak::local_install('/tmp/bfett')"
 ```
 
-### Step 4: Create `bfett/scripts/update_transactions.sh`
+### Step 6: Create `bfett/ingest/transactions.R`
 
-```bash
-#!/bin/bash
-set -e
+The script:
+1. Loads `.env` via `readRenviron()`
+2. Extracts `spreadsheet_id` from `TRANSACTIONS_SHEET_URL` using regex
+3. Calls `bfett::read_google_sheet()` with params from env vars
+4. Saves raw CSV to `TRANSACTIONS_RAW_DIR`
+5. Calls `bfett::process_transactions()` with `output_dir = TRANSACTIONS_RAW_DIR`
+6. Does full refresh (overwrites existing CSVs)
 
-echo "Updating transactions from Google Sheets..."
+### Step 7: Create staging SQL files in `transform/scripts/staging/`
 
-Rscript bfett/ingest/transactions.R
+Create three files using `.sql.jinja` extension:
 
-echo "Running dbt..."
-dbt run --select transactions
+- `active_positions.sql.jinja` — `SELECT * FROM read_csv_auto('{{ env["TRANSACTIONS_RAW_DIR"] }}/active_positions.csv'))`
+- `closed_trades.sql.jinja` — `SELECT * FROM read_csv_auto('{{ env["TRANSACTIONS_RAW_DIR"] }}/closed_trades.csv'))`
+- `cash.sql.jinja` — `SELECT * FROM read_csv_auto('{{ env["TRANSACTIONS_RAW_DIR"] }}/cash.csv'))`
 
-echo "Transactions update complete."
-```
+Leave existing `stg_trades.sql` as-is.
 
-### Step 5: Modify `bfett.sh`
+### Step 8: Edit `bfett/Makefile`
 
-Add to case statement (around line 238):
+Update `ingest` target to run both `ingest/lsx_trades.R` and `ingest/transactions.R`.
 
-```bash
-update-transactions)
-    set_image dbt
-    check_docker
-    run_docker "$1" "-it"
-    EXIT_CODE=$?
-    ;;
-```
-
-Update help text (around line 145):
-
-```bash
-echo "  update-transactions   Update transactions from Google Sheets"
-```
-
-### Step 6: Security Setup
-
-#### Create Service Account
-
-1. Go to Google Cloud Console > IAM & Admin > Service Accounts
-2. Create new service account (e.g., `bfett-sheets`)
-3. Grant roles:
-   - For Sheets API access: "Viewer" or specific permissions
-4. Go to Keys > Add Key > Create New Key > JSON
-5. Download the JSON file securely
-
-#### Share Google Sheet
-
-1. Open your Google Sheet
-2. Click Share > Share with specific people
-3. Add service account email: `bfett-sheets@YOUR_PROJECT.iam.gserviceaccount.com`
-4. Set permission to "Viewer"
-
-#### Store Key Securely
-
-```bash
-# Set secure permissions
-chmod 600 service-account-key.json
-
-# Store outside repo
-mv service-account-key.json /secure/path/
-
-# Update .env with actual path
-GOOGLE_SERVICE_ACCOUNT_KEY=/secure/path/service-account-key.json
-```
-
-### Step 7: Update `.gitignore`
+### Step 9: Update `.gitignore`
 
 ```bash
 # Google service account keys
@@ -286,84 +191,20 @@ service-account-key.json
 *service-account*.json
 ```
 
-### Step 8: Docker Volume Mounts
+### Step 10: Docker Volume Mounts
 
-Update `bfett.sh` run_docker function to mount the service account key:
-
-```bash
-docker run -it \
-    --name "$IMAGE" \
-    -e GOOGLE_SERVICE_ACCOUNT_KEY=/secrets/service-account-key.json \
-    -v "$HOST_DIR/data:$CONTAINER_DIR/data" \
-    -v "$HOST_DIR/database:$CONTAINER_DIR/database" \
-    -v "$HOST_DIR/logs:$CONTAINER_DIR/logs" \
-    -v "$HOST_DIR/seeds:$CONTAINER_DIR/seeds" \
-    -v "/path/on/host/service-account-key.json:/secrets/service-account-key.json:ro" \
-    --user "$(id -u):$(id -g)" \
-    "$IMAGE" \
-    "$cmd"
-```
-
-## Security Considerations
-
-### Access Token vs JSON Key
-
-| Aspect | JSON Key File | Access Token |
-|--------|--------------|-------------|
-| Lifetime | Permanent (or with expiry) | 1 hour |
-| Storage | File must exist | Memory only |
-| If leaked | Permanent access | Limited window |
-| Revocable | Delete key | Wait for expiry |
-
-This implementation:
-- Uses JSON key file for initial authentication
-- Generates short-lived access tokens via `gcloud`
-- Tokens expire after 1 hour (script runtime < 1 hour)
-- No need to store tokens persistently
-
-### Best Practices
-
-1. **Never commit keys to git** - Already handled by `.gitignore`
-2. **Restrict file permissions** - `chmod 600`
-3. **Use read-only scope** - Grant minimum required permissions
-4. **Key rotation** - Regularly rotate keys in GCP Console
-5. **Monitor usage** - Check GCP audit logs for unauthorized access
-
-## Dependencies
-
-### R Packages (already in Dockerfile)
-- `httr` - HTTP requests
-- `jsonlite` - JSON parsing
-- `data.table` - Data manipulation
-
-### System Dependencies
-- Google Cloud SDK (`gcloud` CLI)
-
-## Output Files
-
-| File | Location | Description |
-|------|----------|-------------|
-| `transactions_raw.csv` | `bfett/data/raw/transactions/` | Raw data from Google Sheet |
-| `cash.csv` | `bfett/seeds/` | Processed cash positions |
-| `active_positions.csv` | `bfett/seeds/` | Current holdings |
-| `closed_trades.csv` | `bfett/seeds/` | Completed trades |
-
-## Usage
+Update `bfett.sh` to mount the config directory:
 
 ```bash
-# Build image with changes
-./bfett.sh build dbt
-
-# Run transactions update
-./bfett.sh update-transactions
-
-# Or manually in Docker
-docker exec -it bfett-dbt Rscript bfett/ingest/transactions.R
+VOLUMES="-v $HOST_DIR/config:$FAUCET_DIR/config"
+VOLUMES="$VOLUMES -v $HOST_DIR/data:$FAUCET_DIR/data"
+VOLUMES="$VOLUMES -v $HOST_DIR/logs:$FAUCET_DIR/logs"
 ```
 
-## Notes
+## Design Decisions
 
-- Sheet data expected columns: `isin, name, date, size, amount, type, portfolio, broker`
-- Script uses existing `process_transactions()` from `bfett.processes` package
-- Transaction types supported: `deposit, buy, other, sell, withdraw`
-- Supports multiple portfolios
+- **Output directory:** CSVs go to `data/raw/transactions/`, passed as `output_dir` parameter
+- **Incremental loading:** Full refresh each run (Google Sheet is small)
+- **URL construction:** Use `paste0` instead of broken `modify_url`
+- **Sheet name:** Defaults to first tab; configurable via `TRANSACTIONS_SHEET_NAME` env var (optional)
+- **Lea:** Uses `.sql.jinja` extension for staging files, reads from `{{ env["TRANSACTIONS_RAW_DIR"] }}`

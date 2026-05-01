@@ -14,7 +14,7 @@ dat <- data.frame(
 )
 
 tmp_dir <- tempdir()
-process_transactions(dat, seeds = tmp_dir)
+process_transactions(dat, output_dir = tmp_dir)
 fn <- list.files(tmp_dir)
 expect_true("active_positions.csv" %in% fn)
 expect_true("cash.csv" %in% fn)

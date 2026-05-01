@@ -6,7 +6,7 @@
 \usage{
 process_transactions(
   transactions,
-  seeds = NULL,
+  output_dir = NULL,
   verbose = FALSE,
   tol_amount = 1e-05
 )
@@ -14,7 +14,7 @@ process_transactions(
 \arguments{
 \item{transactions}{data.frame or filename}
 
-\item{seeds}{character, path to seeds folder of the dbt project, default dirname(transactions)}
+\item{output_dir}{character, path to output folder, default dirname(transactions)}
 
 \item{verbose}{logical, print diagnostic messages}
 
@@ -25,7 +25,7 @@ NULL, used for its side effects
 }
 \description{
 Takes "raw" transaction data (isin, name, date, size, amount, type, portfolio, broker) and
-generates three csv -- cash, active_positions, closed_trades -- in the provided seeds folder.
+generates three csv -- cash, active_positions, closed_trades -- in the provided output_dir folder.
 }
 \details{
 Is able to handle different portfolios. 

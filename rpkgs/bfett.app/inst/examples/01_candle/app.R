@@ -1,4 +1,4 @@
-# shiny::runApp(system.file("examples/01_candle", package="bfett.shiny"))
+# shiny::runApp(system.file("examples/01_candle", package="bfett.app"))
 library(shiny)
 library(echarts4r)
 library(bslib)
